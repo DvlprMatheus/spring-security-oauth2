@@ -1,0 +1,45 @@
+volumes:
+  oauth_postgres_data:
+
+services:
+  app:
+    container_name: oauth-app
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    environment:
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_USER: postgres
+        POSTGRES_DB: oauth_db
+        POSTGRES_HOSTNAME: db
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+  db:
+    container_name: oauth-db
+    image: postgres:15
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - oauth_postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: oauth_db
+    ports:
+      - "5432:5432"
+networks:
+  app-network:
+    driver: bridge

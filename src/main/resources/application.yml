@@ -1,0 +1,36 @@
+spring:
+    application:
+        name: oauth
+    datasource:
+        url: jdbc:postgresql://${POSTGRES_HOST:db}:5432/${POSTGRES_DB:oauth_db}
+        username: ${POSTGRES_USER:postgres}
+        password: ${POSTGRES_PASSWORD:postgres}
+        driver-class-name: org.postgresql.Driver
+        hikari:
+            maximum-pool-size: 10
+    jpa:
+        hibernate:
+            ddl-auto: none
+        show-sql: true
+    flyway:
+        enabled: true
+        url: jdbc:postgresql://${POSTGRES_HOST:db}:5432/${POSTGRES_DB:oauth_db}
+        user: ${POSTGRES_USER:postgres}
+        password: ${POSTGRES_PASSWORD:postgres}
+        locations: classpath:db/migration
+        baseline-on-migrate: true
+        validate-on-migrate: true
+    mvc:
+        log-resolved-exception: false
+    devtools:
+        restart:
+            log-condition-evaluation-delta: true
+aws:
+    cognito:
+        region: ${AWS_REGION}
+        user-pool-id: ${AWS_COGNITO_USER_POOL_ID}
+        client-id: ${AWS_COGNITO_CLIENT_ID}
+        client-secret: ${AWS_COGNITO_CLIENT_SECRET}
+        domain: ${AWS_COGNITO_DOMAIN}
+        redirect-uri: ${AWS_COGNITO_REDIRECT_URI:http://localhost:8080/oauth2/microsoft/callback}
+        microsoft-identity-provider: ${AWS_COGNITO_MICROSOFT_IDENTITY_PROVIDER}
