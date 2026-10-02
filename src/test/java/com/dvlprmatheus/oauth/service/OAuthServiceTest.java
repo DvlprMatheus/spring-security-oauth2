@@ -9,18 +9,20 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.dvlprmatheus.oauth.api.exception.AuthenticationFailedException;
+import com.dvlprmatheus.oauth.api.exception.SsoProviderNotFoundException;
 import com.dvlprmatheus.oauth.api.exception.UserAlreadyExistsException;
 import com.dvlprmatheus.oauth.api.response.AuthResponse;
-import com.dvlprmatheus.oauth.config.properties.CognitoProperties;
+import com.dvlprmatheus.oauth.entity.SsoProvider;
 import com.dvlprmatheus.oauth.entity.User;
+import com.dvlprmatheus.oauth.entity.enums.SsoProviderType;
 import com.dvlprmatheus.oauth.service.aws.CognitoOAuthService;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoTokenResponse;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoUserInfo;
 import java.util.Optional;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -37,46 +39,46 @@ class OAuthServiceTest {
       new CognitoTokenResponse("access-token", "id-token", "refresh-token", "Bearer", 3600);
 
   @Mock private UserService userService;
+  @Mock private SsoProviderService ssoProviderService;
   @Mock private CognitoOAuthService cognitoOAuthService;
-  private OAuthService oAuthService;
+  @InjectMocks private OAuthService oAuthService;
 
-  @BeforeEach
-  void setUp() {
-    CognitoProperties properties =
-        new CognitoProperties(
-            "sa-east-1",
-            "pool-id",
-            "client-id",
-            "client-secret",
-            "https://cognito.example.com",
-            "http://localhost:8080/oauth2/microsoft/callback",
-            "Microsoft");
-    oAuthService = new OAuthService(userService, cognitoOAuthService, properties);
+  @Test
+  void shouldBuildAuthorizeUrlFromRegisteredProvider() {
+    when(ssoProviderService.findByType(SsoProviderType.MICROSOFT))
+        .thenReturn(SsoProvider.builder().identityProvider("Microsoft").build());
+    when(cognitoOAuthService.authorizeUrl("Microsoft")).thenReturn("https://authorize");
+
+    assertThat(oAuthService.authorizeUrl(SsoProviderType.MICROSOFT)).isEqualTo("https://authorize");
   }
 
   @Test
-  void shouldBuildAuthorizeUrlWithConfiguredIdentityProvider() {
-    when(cognitoOAuthService.authorizeUrl("Microsoft")).thenReturn("https://authorize");
+  void shouldFailWhenProviderIsNotRegistered() {
+    when(ssoProviderService.findByType(SsoProviderType.GOOGLE))
+        .thenThrow(new SsoProviderNotFoundException("Identity provider is not registered"));
 
-    assertThat(oAuthService.microsoftAuthorizeUrl()).isEqualTo("https://authorize");
+    assertThatThrownBy(() -> oAuthService.authorizeUrl(SsoProviderType.GOOGLE))
+        .isInstanceOf(SsoProviderNotFoundException.class)
+        .hasMessage("Identity provider is not registered");
+    verifyNoInteractions(cognitoOAuthService);
   }
 
   @Test
   void shouldFailWhenProviderReturnsError() {
     assertThatThrownBy(
             () ->
-                oAuthService.authenticateWithMicrosoft(
+                oAuthService.authenticate(
                     null, "access_denied", "AADSTS50020: User account 'joao@example.com'"))
         .isInstanceOf(AuthenticationFailedException.class)
-        .hasMessage("Microsoft authentication failed");
+        .hasMessage("Identity provider authentication failed");
     verifyNoInteractions(cognitoOAuthService, userService);
   }
 
   @Test
   void shouldFailWhenCodeIsMissing() {
-    assertThatThrownBy(() -> oAuthService.authenticateWithMicrosoft(null, null, null))
+    assertThatThrownBy(() -> oAuthService.authenticate(null, null, null))
         .isInstanceOf(AuthenticationFailedException.class)
-        .hasMessage("Microsoft authentication failed");
+        .hasMessage("Identity provider authentication failed");
     verifyNoInteractions(cognitoOAuthService, userService);
   }
 
@@ -85,7 +87,7 @@ class OAuthServiceTest {
     when(cognitoOAuthService.exchangeAuthorizationCode(CODE))
         .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
 
-    assertThatThrownBy(() -> oAuthService.authenticateWithMicrosoft(CODE, null, null))
+    assertThatThrownBy(() -> oAuthService.authenticate(CODE, null, null))
         .isInstanceOf(AuthenticationFailedException.class)
         .hasMessage("Invalid or expired authorization code");
   }
@@ -95,9 +97,9 @@ class OAuthServiceTest {
     when(cognitoOAuthService.exchangeAuthorizationCode(CODE))
         .thenThrow(new ResourceAccessException("timeout"));
 
-    assertThatThrownBy(() -> oAuthService.authenticateWithMicrosoft(CODE, null, null))
+    assertThatThrownBy(() -> oAuthService.authenticate(CODE, null, null))
         .isInstanceOf(AuthenticationFailedException.class)
-        .hasMessage("Error authenticating with Microsoft");
+        .hasMessage("Error authenticating with the identity provider");
   }
 
   @Test
@@ -108,7 +110,7 @@ class OAuthServiceTest {
     when(userService.findByCognitoSubOptional(COGNITO_SUB))
         .thenReturn(Optional.of(User.builder().email(EMAIL).cognitoSub(COGNITO_SUB).build()));
 
-    AuthResponse response = oAuthService.authenticateWithMicrosoft(CODE, null, null);
+    AuthResponse response = oAuthService.authenticate(CODE, null, null);
 
     assertThat(response)
         .isEqualTo(new AuthResponse("access-token", "id-token", "refresh-token", "Bearer", 3600));
@@ -124,7 +126,7 @@ class OAuthServiceTest {
     when(userService.existsByEmail(EMAIL)).thenReturn(false);
     when(userService.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-    oAuthService.authenticateWithMicrosoft(CODE, null, null);
+    oAuthService.authenticate(CODE, null, null);
 
     ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
     verify(userService).save(captor.capture());
@@ -140,7 +142,7 @@ class OAuthServiceTest {
         .thenReturn(new CognitoUserInfo(COGNITO_SUB, " "));
     when(userService.findByCognitoSubOptional(COGNITO_SUB)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> oAuthService.authenticateWithMicrosoft(CODE, null, null))
+    assertThatThrownBy(() -> oAuthService.authenticate(CODE, null, null))
         .isInstanceOf(AuthenticationFailedException.class)
         .hasMessage("Identity provider did not return an email");
     verify(userService, never()).save(any());
@@ -154,7 +156,7 @@ class OAuthServiceTest {
     when(userService.findByCognitoSubOptional(COGNITO_SUB)).thenReturn(Optional.empty());
     when(userService.existsByEmail(EMAIL)).thenReturn(true);
 
-    assertThatThrownBy(() -> oAuthService.authenticateWithMicrosoft(CODE, null, null))
+    assertThatThrownBy(() -> oAuthService.authenticate(CODE, null, null))
         .isInstanceOf(UserAlreadyExistsException.class)
         .hasMessage("Email already registered, sign in with password");
     verify(userService, never()).save(any());

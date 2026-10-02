@@ -3,8 +3,9 @@ package com.dvlprmatheus.oauth.service;
 import com.dvlprmatheus.oauth.api.exception.AuthenticationFailedException;
 import com.dvlprmatheus.oauth.api.exception.UserAlreadyExistsException;
 import com.dvlprmatheus.oauth.api.response.AuthResponse;
-import com.dvlprmatheus.oauth.config.properties.CognitoProperties;
+import com.dvlprmatheus.oauth.entity.SsoProvider;
 import com.dvlprmatheus.oauth.entity.User;
+import com.dvlprmatheus.oauth.entity.enums.SsoProviderType;
 import com.dvlprmatheus.oauth.service.aws.CognitoOAuthService;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoTokenResponse;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoUserInfo;
@@ -21,28 +22,21 @@ import org.springframework.web.client.RestClientException;
 public class OAuthService {
 
   private final UserService userService;
+  private final SsoProviderService ssoProviderService;
   private final CognitoOAuthService cognitoOAuthService;
-  private final CognitoProperties cognitoProperties;
 
-  public String microsoftAuthorizeUrl() {
-    return cognitoOAuthService.authorizeUrl(cognitoProperties.microsoftIdentityProvider());
+  public String authorizeUrl(SsoProviderType provider) {
+    SsoProvider ssoProvider = ssoProviderService.findByType(provider);
+    return cognitoOAuthService.authorizeUrl(ssoProvider.getIdentityProvider());
   }
 
-  public AuthResponse authenticateWithMicrosoft(
-      String code, String error, String errorDescription) {
-    log.info("Attempting to authenticate user with Microsoft");
-    if (error != null || code == null) {
-      log.warn(
-          "Microsoft login did not return an authorization code: error={}, description={}",
-          LogSanitizer.sanitizeText(error),
-          LogSanitizer.sanitizeText(errorDescription));
-      throw new AuthenticationFailedException("Microsoft authentication failed");
-    }
-    CognitoTokenResponse tokens = exchangeAuthorizationCode(code);
+  public AuthResponse authenticate(String code, String error, String errorDescription) {
+    log.info("Attempting to authenticate user with identity provider");
+    CognitoTokenResponse tokens = exchangeAuthorizationCode(code, error, errorDescription);
     CognitoUserInfo userInfo = cognitoOAuthService.userInfo(tokens.accessToken());
     User user = findOrCreateFederatedUser(userInfo);
     log.info(
-        "User with Cognito sub {} authenticated successfully with Microsoft",
+        "User with Cognito sub {} authenticated successfully",
         LogSanitizer.sanitize(user.getCognitoSub()));
     return new AuthResponse(
         tokens.accessToken(),
@@ -52,7 +46,15 @@ public class OAuthService {
         tokens.expiresIn());
   }
 
-  private CognitoTokenResponse exchangeAuthorizationCode(String code) {
+  public CognitoTokenResponse exchangeAuthorizationCode(
+      String code, String error, String errorDescription) {
+    if (error != null || code == null) {
+      log.warn(
+          "Identity provider login did not return an authorization code: error={}, description={}",
+          LogSanitizer.sanitizeText(error),
+          LogSanitizer.sanitizeText(errorDescription));
+      throw new AuthenticationFailedException("Identity provider authentication failed");
+    }
     try {
       return cognitoOAuthService.exchangeAuthorizationCode(code);
     } catch (HttpClientErrorException e) {
@@ -60,7 +62,7 @@ public class OAuthService {
       throw new AuthenticationFailedException("Invalid or expired authorization code", e);
     } catch (RestClientException e) {
       log.error("Error exchanging authorization code with Cognito");
-      throw new AuthenticationFailedException("Error authenticating with Microsoft", e);
+      throw new AuthenticationFailedException("Error authenticating with the identity provider", e);
     }
   }
 

@@ -5,6 +5,7 @@ import com.dvlprmatheus.oauth.entity.User;
 import com.dvlprmatheus.oauth.repository.UserRepository;
 import com.dvlprmatheus.oauth.util.LogSanitizer;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,11 +34,11 @@ public class UserService {
 
   public boolean existsByEmail(String email) {
     log.info("Checking if email {} exists", LogSanitizer.sanitize(email));
-    return userRepository.existsByEmail(email);
+    return userRepository.existsByEmailIgnoreCase(email);
   }
 
   public Optional<User> findByEmailOptional(String email) {
-    return userRepository.findByEmail(email);
+    return userRepository.findByEmailIgnoreCase(email);
   }
 
   public User findByEmail(String email) {
@@ -45,6 +46,17 @@ public class UserService {
         .orElseThrow(
             () -> {
               log.warn("User with email {} not found in database", LogSanitizer.sanitize(email));
+              return new UserNotExistsException("User not found");
+            });
+  }
+
+  public User findById(UUID id) {
+    return userRepository
+        .findById(id)
+        .orElseThrow(
+            () -> {
+              log.warn(
+                  "User with id {} not found in database", LogSanitizer.sanitize(id.toString()));
               return new UserNotExistsException("User not found");
             });
   }

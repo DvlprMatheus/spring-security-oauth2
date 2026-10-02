@@ -2,8 +2,10 @@ package com.dvlprmatheus.oauth.api.exception.handler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.dvlprmatheus.oauth.api.exception.AccountLinkException;
 import com.dvlprmatheus.oauth.api.exception.AuthenticationFailedException;
 import com.dvlprmatheus.oauth.api.exception.EmailConfirmationException;
+import com.dvlprmatheus.oauth.api.exception.SsoProviderNotFoundException;
 import com.dvlprmatheus.oauth.api.exception.UserAlreadyExistsException;
 import com.dvlprmatheus.oauth.api.exception.UserCreationException;
 import com.dvlprmatheus.oauth.api.exception.UserNotExistsException;
@@ -66,6 +68,25 @@ class GlobalExceptionHandlerTest {
             new EmailConfirmationException("Invalid confirmation code"), request),
         HttpStatus.BAD_REQUEST,
         "Invalid confirmation code");
+  }
+
+  @Test
+  void shouldMapAccountLinkToBadRequest() {
+    assertError(
+        handler.handleAccountLinkException(
+            new AccountLinkException("Identity provider email does not match the user email"),
+            request),
+        HttpStatus.BAD_REQUEST,
+        "Identity provider email does not match the user email");
+  }
+
+  @Test
+  void shouldMapMissingSsoProviderToNotFound() {
+    assertError(
+        handler.handleSsoProviderNotFoundException(
+            new SsoProviderNotFoundException("Identity provider is not registered"), request),
+        HttpStatus.NOT_FOUND,
+        "Identity provider is not registered");
   }
 
   @Test

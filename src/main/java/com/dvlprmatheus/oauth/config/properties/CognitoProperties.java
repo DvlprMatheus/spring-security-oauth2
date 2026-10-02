@@ -9,8 +9,7 @@ public record CognitoProperties(
     String clientId,
     String clientSecret,
     String domain,
-    String redirectUri,
-    String microsoftIdentityProvider) {
+    String redirectUri) {
 
   public String issuerUri() {
     return "https://cognito-idp." + region + ".amazonaws.com/" + userPoolId;

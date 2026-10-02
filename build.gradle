@@ -39,7 +39,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security-oauth2-resource-server'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation platform('software.amazon.awssdk:bom:2.55.4')
-	implementation 'software.amazon.awssdk:apache-client'
+	implementation 'software.amazon.awssdk:apache5-client'
 	implementation 'software.amazon.awssdk:cognitoidentityprovider'
 	implementation 'software.amazon.awssdk:cognitoidentity'
 	implementation 'software.amazon.awssdk:cognitosync'

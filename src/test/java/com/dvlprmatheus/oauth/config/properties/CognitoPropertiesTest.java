@@ -13,8 +13,7 @@ class CognitoPropertiesTest {
           "client-id",
           "client-secret",
           "https://cognito.example.com",
-          "http://localhost:8080/callback",
-          "Microsoft");
+          "http://localhost:8080/oauth2/callback");
 
   @Test
   void shouldBuildIssuerUriFromRegionAndUserPool() {

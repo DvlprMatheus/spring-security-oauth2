@@ -1,6 +1,6 @@
 spring:
     application:
-        name: oauth
+        name: spring-security-oauth2
     datasource:
         url: jdbc:postgresql://${POSTGRES_HOST:db}:5432/${POSTGRES_DB:oauth_db}
         username: ${POSTGRES_USER:postgres}
@@ -32,5 +32,4 @@ aws:
         client-id: ${AWS_COGNITO_CLIENT_ID}
         client-secret: ${AWS_COGNITO_CLIENT_SECRET}
         domain: ${AWS_COGNITO_DOMAIN}
-        redirect-uri: ${AWS_COGNITO_REDIRECT_URI:http://localhost:8080/oauth2/microsoft/callback}
-        microsoft-identity-provider: ${AWS_COGNITO_MICROSOFT_IDENTITY_PROVIDER}
+        redirect-uri: ${AWS_COGNITO_REDIRECT_URI:http://localhost:8080/oauth2/callback}

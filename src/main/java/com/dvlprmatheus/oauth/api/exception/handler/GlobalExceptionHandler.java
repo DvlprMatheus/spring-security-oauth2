@@ -1,7 +1,9 @@
 package com.dvlprmatheus.oauth.api.exception.handler;
 
+import com.dvlprmatheus.oauth.api.exception.AccountLinkException;
 import com.dvlprmatheus.oauth.api.exception.AuthenticationFailedException;
 import com.dvlprmatheus.oauth.api.exception.EmailConfirmationException;
+import com.dvlprmatheus.oauth.api.exception.SsoProviderNotFoundException;
 import com.dvlprmatheus.oauth.api.exception.UserAlreadyExistsException;
 import com.dvlprmatheus.oauth.api.exception.UserCreationException;
 import com.dvlprmatheus.oauth.api.exception.UserNotExistsException;
@@ -69,6 +71,32 @@ public class GlobalExceptionHandler {
             .path(request.getRequestURI())
             .build();
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+  }
+
+  @ExceptionHandler(AccountLinkException.class)
+  public ResponseEntity<ErrorResponse> handleAccountLinkException(
+      AccountLinkException ex, HttpServletRequest request) {
+    ErrorResponse error =
+        ErrorResponse.builder()
+            .timestamp(LocalDateTime.now())
+            .status(HttpStatus.BAD_REQUEST.value())
+            .message(ex.getMessage())
+            .path(request.getRequestURI())
+            .build();
+    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+  }
+
+  @ExceptionHandler(SsoProviderNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleSsoProviderNotFoundException(
+      SsoProviderNotFoundException ex, HttpServletRequest request) {
+    ErrorResponse error =
+        ErrorResponse.builder()
+            .timestamp(LocalDateTime.now())
+            .status(HttpStatus.NOT_FOUND.value())
+            .message(ex.getMessage())
+            .path(request.getRequestURI())
+            .build();
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
   }
 
   @ExceptionHandler(UserNotExistsException.class)

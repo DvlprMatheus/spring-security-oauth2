@@ -27,7 +27,7 @@ import org.springframework.web.client.RestClient;
 class CognitoOAuthServiceTest {
 
   private static final String DOMAIN = "https://cognito.example.com";
-  private static final String REDIRECT_URI = "http://localhost:8080/oauth2/microsoft/callback";
+  private static final String REDIRECT_URI = "http://localhost:8080/oauth2/callback";
 
   private MockRestServiceServer server;
   private CognitoOAuthService cognitoOAuthService;
@@ -36,13 +36,7 @@ class CognitoOAuthServiceTest {
   void setUp() {
     CognitoProperties properties =
         new CognitoProperties(
-            "sa-east-1",
-            "pool-id",
-            "client-id",
-            "client-secret",
-            DOMAIN,
-            REDIRECT_URI,
-            "Microsoft");
+            "sa-east-1", "pool-id", "client-id", "client-secret", DOMAIN, REDIRECT_URI);
     RestClient.Builder builder = RestClient.builder();
     server = MockRestServiceServer.bindTo(builder).build();
     cognitoOAuthService = new CognitoOAuthService(properties, builder);
@@ -59,7 +53,15 @@ class CognitoOAuthServiceTest {
         .contains("redirect_uri=" + REDIRECT_URI)
         .contains("identity_provider=Microsoft")
         .contains("scope=openid%20email%20profile%20aws.cognito.signin.user.admin")
+        .doesNotContain("state=")
         .doesNotContain("client-secret");
+  }
+
+  @Test
+  void shouldAppendStateWhenLinkingAnIdentityProvider() {
+    String url = cognitoOAuthService.authorizeUrl("Google", "payload.signature");
+
+    assertThat(url).contains("identity_provider=Google").contains("state=payload.signature");
   }
 
   @Test

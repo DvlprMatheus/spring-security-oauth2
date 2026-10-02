@@ -6,8 +6,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dvlprmatheus.oauth.config.properties.CognitoProperties;
+import com.dvlprmatheus.oauth.service.aws.model.CognitoIdentity;
+import com.dvlprmatheus.oauth.service.aws.model.CognitoUser;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Optional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,17 +20,27 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminCreateUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminCreateUserResponse;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminDeleteUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminGetUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminGetUserResponse;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminLinkProviderForUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.AdminSetUserPasswordRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AttributeType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AuthFlowType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.AuthenticationResultType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.ConfirmSignUpRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.GetUserRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.GetUserResponse;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.GlobalSignOutRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.InitiateAuthRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.InitiateAuthResponse;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.MessageActionType;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.ResendConfirmationCodeRequest;
 import software.amazon.awssdk.services.cognitoidentityprovider.model.SignUpRequest;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.UserNotFoundException;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.UserType;
 
 @ExtendWith(MockitoExtension.class)
 class CognitoServiceTest {
@@ -48,8 +61,7 @@ class CognitoServiceTest {
             CLIENT_ID,
             CLIENT_SECRET,
             "https://cognito.example.com",
-            "http://localhost:8080/callback",
-            "Microsoft");
+            "http://localhost:8080/callback");
     cognitoService = new CognitoService(cognitoClient, properties);
   }
 
@@ -153,5 +165,112 @@ class CognitoServiceTest {
     verify(cognitoClient)
         .adminDeleteUser(
             AdminDeleteUserRequest.builder().username(EMAIL).userPoolId("pool-id").build());
+  }
+
+  @Test
+  void shouldDescribeFederatedUserFromAccessToken() {
+    when(cognitoClient.getUser(any(GetUserRequest.class)))
+        .thenReturn(
+            GetUserResponse.builder()
+                .username("Microsoft_abc")
+                .userAttributes(
+                    AttributeType.builder().name("sub").value("federated-sub").build(),
+                    AttributeType.builder().name("email").value(EMAIL).build(),
+                    AttributeType.builder()
+                        .name("identities")
+                        .value(
+                            """
+                            [{"userId":"ms-user","providerName":"Microsoft","primary":true}]
+                            """)
+                        .build())
+                .build());
+
+    CognitoUser user = cognitoService.describeUser("access-token");
+
+    assertThat(user.username()).isEqualTo("Microsoft_abc");
+    assertThat(user.sub()).isEqualTo("federated-sub");
+    assertThat(user.email()).isEqualTo(EMAIL);
+    assertThat(user.federatedIdentity()).contains(new CognitoIdentity("ms-user", "Microsoft"));
+  }
+
+  @Test
+  void shouldCreateConfirmedUserWithoutSendingAnInvitation() {
+    when(cognitoClient.adminCreateUser(any(AdminCreateUserRequest.class)))
+        .thenReturn(
+            AdminCreateUserResponse.builder()
+                .user(
+                    UserType.builder()
+                        .username(EMAIL)
+                        .attributes(
+                            AttributeType.builder().name("sub").value("local-sub").build(),
+                            AttributeType.builder().name("email").value(EMAIL).build())
+                        .build())
+                .build());
+
+    CognitoUser user = cognitoService.adminCreateUser(EMAIL);
+
+    assertThat(user.sub()).isEqualTo("local-sub");
+    assertThat(user.federatedIdentity()).isEmpty();
+    ArgumentCaptor<AdminCreateUserRequest> captor =
+        ArgumentCaptor.forClass(AdminCreateUserRequest.class);
+    verify(cognitoClient).adminCreateUser(captor.capture());
+    assertThat(captor.getValue().username()).isEqualTo(EMAIL);
+    assertThat(captor.getValue().messageAction()).isEqualTo(MessageActionType.SUPPRESS);
+    assertThat(captor.getValue().userAttributes())
+        .contains(
+            AttributeType.builder().name("email").value(EMAIL).build(),
+            AttributeType.builder().name("email_verified").value("true").build());
+  }
+
+  @Test
+  void shouldSetPermanentPassword() {
+    cognitoService.adminSetPermanentPassword(EMAIL, "Str0ngPass!");
+
+    verify(cognitoClient)
+        .adminSetUserPassword(
+            AdminSetUserPasswordRequest.builder()
+                .userPoolId("pool-id")
+                .username(EMAIL)
+                .password("Str0ngPass!")
+                .permanent(true)
+                .build());
+  }
+
+  @Test
+  void shouldReturnEmptyWhenAdminUserDoesNotExist() {
+    when(cognitoClient.adminGetUser(any(AdminGetUserRequest.class)))
+        .thenThrow(UserNotFoundException.builder().message("missing").build());
+
+    assertThat(cognitoService.adminFindUser(EMAIL)).isEmpty();
+  }
+
+  @Test
+  void shouldFindAdminUserByUsername() {
+    when(cognitoClient.adminGetUser(any(AdminGetUserRequest.class)))
+        .thenReturn(
+            AdminGetUserResponse.builder()
+                .username(EMAIL)
+                .userAttributes(AttributeType.builder().name("sub").value("local-sub").build())
+                .build());
+
+    Optional<CognitoUser> user = cognitoService.adminFindUser(EMAIL);
+
+    assertThat(user).map(CognitoUser::sub).contains("local-sub");
+  }
+
+  @Test
+  void shouldLinkProviderSubjectToLocalUser() {
+    cognitoService.adminLinkProviderForUser(EMAIL, new CognitoIdentity("ms-user", "Microsoft"));
+
+    ArgumentCaptor<AdminLinkProviderForUserRequest> captor =
+        ArgumentCaptor.forClass(AdminLinkProviderForUserRequest.class);
+    verify(cognitoClient).adminLinkProviderForUser(captor.capture());
+    AdminLinkProviderForUserRequest request = captor.getValue();
+    assertThat(request.userPoolId()).isEqualTo("pool-id");
+    assertThat(request.destinationUser().providerName()).isEqualTo("Cognito");
+    assertThat(request.destinationUser().providerAttributeValue()).isEqualTo(EMAIL);
+    assertThat(request.sourceUser().providerName()).isEqualTo("Microsoft");
+    assertThat(request.sourceUser().providerAttributeName()).isEqualTo("Cognito_Subject");
+    assertThat(request.sourceUser().providerAttributeValue()).isEqualTo("ms-user");
   }
 }

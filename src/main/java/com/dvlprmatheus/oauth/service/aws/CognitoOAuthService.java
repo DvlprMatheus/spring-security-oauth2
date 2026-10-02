@@ -30,16 +30,23 @@ public class CognitoOAuthService {
   }
 
   public String authorizeUrl(String identityProvider) {
-    return UriComponentsBuilder.fromUriString(cognitoProperties.domain())
-        .path("/oauth2/authorize")
-        .queryParam("response_type", "code")
-        .queryParam("client_id", cognitoProperties.clientId())
-        .queryParam("redirect_uri", cognitoProperties.redirectUri())
-        .queryParam("identity_provider", identityProvider)
-        .queryParam("scope", SCOPES)
-        .build()
-        .encode()
-        .toUriString();
+    return authorizeUrl(identityProvider, null);
+  }
+
+  public String authorizeUrl(String identityProvider, String state) {
+    UriComponentsBuilder builder =
+        UriComponentsBuilder.fromUriString(cognitoProperties.domain())
+            .path("/oauth2/authorize")
+            .queryParam("response_type", "code")
+            .queryParam("client_id", cognitoProperties.clientId())
+            .queryParam("redirect_uri", cognitoProperties.redirectUri())
+            .queryParam("identity_provider", identityProvider)
+            .queryParam("scope", SCOPES)
+            .queryParam("prompt", "login");
+    if (state != null) {
+      builder.queryParam("state", state);
+    }
+    return builder.build().encode().toUriString();
   }
 
   public CognitoTokenResponse exchangeAuthorizationCode(String code) {

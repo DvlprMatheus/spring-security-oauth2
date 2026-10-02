@@ -2,7 +2,7 @@
 
 ## 📋 Sobre o Projeto
 
-Este projeto é uma API REST desenvolvida em **Spring Boot** com **Spring Security** atuando como **OAuth2 Resource Server**, delegando toda a gestão de identidade ao **AWS Cognito**. O projeto implementa cadastro com confirmação de e-mail, login com e-mail e senha, renovação e revogação de tokens e **login federado com Microsoft** (via Cognito Hosted UI), mantendo uma cópia local dos usuários no **PostgreSQL** para relacionamento com roles e regras de negócio.
+Este projeto é uma API REST desenvolvida em **Spring Boot** com **Spring Security** atuando como **OAuth2 Resource Server**, delegando toda a gestão de identidade ao **AWS Cognito**. O projeto implementa cadastro com confirmação de e-mail, login com e-mail e senha, renovação e revogação de tokens e **login federado** (Microsoft, Google, Facebook, Apple e Amazon, via Cognito Hosted UI), mantendo uma cópia local dos usuários no **PostgreSQL** para relacionamento com roles e regras de negócio.
 
 ### 🎯 Objetivo
 
@@ -10,7 +10,7 @@ Validar e servir de referência para uma arquitetura de autenticação com:
 - Identidade gerenciada pelo AWS Cognito (senhas nunca passam pelo banco local)
 - Validação de JWT emitido pelo Cognito (assinatura, issuer, `token_use` e `client_id`)
 - Revogação efetiva de tokens no logout (Global Sign-Out)
-- Login social/corporativo com Microsoft via Authorization Code Flow
+- Login social com provedores cadastrados no banco (Microsoft, Google, Facebook, Apple e Amazon) via Authorization Code Flow
 - Gerenciamento local de usuários e roles
 - Tratamento de exceções global
 - Validação de dados
@@ -50,7 +50,7 @@ implementation 'org.springframework.boot:spring-boot-starter-validation'
 
 // AWS SDK
 implementation platform('software.amazon.awssdk:bom:2.55.4')
-implementation 'software.amazon.awssdk:apache-client'
+implementation 'software.amazon.awssdk:apache5-client'
 implementation 'software.amazon.awssdk:cognitoidentityprovider'
 implementation 'software.amazon.awssdk:cognitoidentity'
 implementation 'software.amazon.awssdk:cognitosync'
@@ -86,11 +86,15 @@ src/main/java/com/dvlprmatheus/oauth/
 ├── api/
 │   ├── controller/                  # Controllers REST
 │   │   ├── AuthController.java
+│   │   ├── LinkController.java
 │   │   ├── OAuthController.java
+│   │   ├── SsoProviderController.java
 │   │   └── UserController.java
 │   ├── exception/                   # Exceções customizadas
+│   │   ├── AccountLinkException.java
 │   │   ├── AuthenticationFailedException.java
 │   │   ├── EmailConfirmationException.java
+│   │   ├── SsoProviderNotFoundException.java
 │   │   ├── UserAlreadyExistsException.java
 │   │   ├── UserCreationException.java
 │   │   ├── UserNotExistsException.java
@@ -98,13 +102,18 @@ src/main/java/com/dvlprmatheus/oauth/
 │   │       └── GlobalExceptionHandler.java
 │   ├── request/                     # DTOs de requisição
 │   │   ├── AuthRequest.java
+│   │   ├── AuthorizeRequest.java
 │   │   ├── ConfirmEmailRequest.java
+│   │   ├── CreateLocalLoginRequest.java
+│   │   ├── CreateSsoProviderRequest.java
 │   │   ├── RefreshRequest.java
 │   │   ├── RegisterRequest.java
 │   │   └── ResendCodeRequest.java
 │   └── response/                    # DTOs de resposta
 │       ├── AuthResponse.java
+│       ├── AuthorizationUrlResponse.java
 │       ├── ErrorResponse.java
+│       ├── LinkStateResponse.java
 │       └── UserResponse.java
 ├── config/
 │   ├── aws/                         # Cliente do Cognito (AWS SDK)
@@ -118,19 +127,28 @@ src/main/java/com/dvlprmatheus/oauth/
 ├── entity/                          # Entidades JPA
 │   ├── AbstractEntity.java
 │   ├── Role.java
-│   └── User.java
+│   ├── SsoProvider.java
+│   ├── User.java
+│   └── enums/
+│       └── SsoProviderType.java
 ├── repository/                      # Repositórios Spring Data JPA
 │   ├── RoleRepository.java
+│   ├── SsoProviderRepository.java
 │   └── UserRepository.java
 ├── service/                         # Camada de serviços
 │   ├── AuthenticationService.java
+│   ├── LinkService.java
 │   ├── OAuthService.java
+│   ├── OAuthStateService.java
+│   ├── SsoProviderService.java
 │   ├── UserService.java
 │   └── aws/                         # Integração com o Cognito
 │       ├── CognitoOAuthService.java
 │       ├── CognitoService.java
 │       └── model/
+│           ├── CognitoIdentity.java
 │           ├── CognitoTokenResponse.java
+│           ├── CognitoUser.java
 │           └── CognitoUserInfo.java
 └── util/                            # Utilitários
     └── LogSanitizer.java
@@ -138,7 +156,9 @@ src/main/java/com/dvlprmatheus/oauth/
 src/main/resources/
 ├── application.yml
 └── db/migration/
-    └── V1__create_initial_tables.sql
+    ├── V1__create_initial_tables.sql
+    ├── V2__create_sso_providers_table.sql
+    └── V3__allow_null_cognito_sub.sql
 
 .devcontainer/                       # Ambiente de desenvolvimento (Java 21 + PostgreSQL)
 ├── .env.example
@@ -158,12 +178,19 @@ src/main/resources/
 - **Logout com Revogação**: `GlobalSignOut` invalida todos os tokens do usuário no Cognito
 - **Secret Hash**: Todas as chamadas ao Cognito enviam o `SECRET_HASH` (HMAC-SHA256 com o client secret)
 
-### Login Federado com Microsoft
+### Login Federado
 
-- **Authorization Code Flow**: Redirecionamento para o Cognito Hosted UI com `identity_provider` da Microsoft
+- **Provedor cadastrado no banco**: `POST /oauth2/authorize` recebe um `SsoProviderType` e só gera a URL se esse tipo existir em `sso_providers`
+- **Authorization Code Flow**: A resposta traz a URL do Cognito Hosted UI com o `identity_provider` cadastrado. O cliente redireciona o navegador
 - **Troca de Código**: O backend troca o `code` por tokens no endpoint `/oauth2/token` do Cognito (Basic Auth com client id/secret)
 - **Provisionamento Automático**: No primeiro login, o usuário é criado no banco local a partir do `userInfo` do Cognito
-- **Proteção contra Conflito de Contas**: Um e-mail já cadastrado com senha não pode ser reutilizado via Microsoft
+- **Proteção contra Conflito de Contas**: Um e-mail já cadastrado com senha não pode entrar por um provedor externo até que as contas sejam vinculadas
+- **Vínculo de contas**: Quem entrou pelo provedor pode criar senha local; quem entrou com senha pode vincular um provedor. O `state` do vínculo é assinado com HMAC-SHA256 e não é gravado no banco
+
+### Vínculo de Contas
+
+- **Login local a partir do provedor**: Cria no Cognito um usuário nativo com e-mail já verificado e senha permanente, remove o usuário federado, vincula a identidade com `AdminLinkProviderForUser` e troca o `cognitoSub` local
+- **Provedor a partir do login local**: Exige um usuário nativo já existente. O callback com `state` não autentica; ele vincula as contas somente se o e-mail do provedor for o mesmo do usuário
 
 ### Validação de Tokens (Resource Server)
 
@@ -224,8 +251,7 @@ aws:
     client-id: ${AWS_COGNITO_CLIENT_ID}
     client-secret: ${AWS_COGNITO_CLIENT_SECRET}
     domain: ${AWS_COGNITO_DOMAIN}
-    redirect-uri: ${AWS_COGNITO_REDIRECT_URI:http://localhost:8080/oauth2/microsoft/callback}
-    microsoft-identity-provider: ${AWS_COGNITO_MICROSOFT_IDENTITY_PROVIDER}
+    redirect-uri: ${AWS_COGNITO_REDIRECT_URI:http://localhost:8080/oauth2/callback}
 ```
 
 ### Variáveis de Ambiente
@@ -246,12 +272,13 @@ O modelo completo está em `.devcontainer/.env.example`.
 - `AWS_COGNITO_CLIENT_ID`: ID do app client
 - `AWS_COGNITO_CLIENT_SECRET`: Secret do app client
 - `AWS_COGNITO_DOMAIN`: URL completa do domínio do Hosted UI (ex.: `https://meu-app.auth.us-east-1.amazoncognito.com`)
-- `AWS_COGNITO_REDIRECT_URI`: URL de callback do login federado (padrão: `http://localhost:8080/oauth2/microsoft/callback`)
-- `AWS_COGNITO_MICROSOFT_IDENTITY_PROVIDER`: Nome do identity provider da Microsoft cadastrado no User Pool
+- `AWS_COGNITO_REDIRECT_URI`: URL de callback do login federado (padrão: `http://localhost:8080/oauth2/callback`)
+
+O nome de cada identity provider **não** fica em variável de ambiente. Ele é cadastrado na tabela `sso_providers` por `POST /v1/sso-providers` (rota autenticada).
 
 **Credenciais AWS**
 
-- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: Credenciais IAM, previstas para operações administrativas como `AdminDeleteUser`
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`: Credenciais IAM para `AdminDeleteUser`, `AdminCreateUser`, `AdminSetUserPassword`, `AdminGetUser` e `AdminLinkProviderForUser`
 
 ### Configuração do AWS Cognito
 
@@ -260,13 +287,13 @@ Para o projeto funcionar, o User Pool precisa estar configurado com:
 - **Login por e-mail**: E-mail como atributo de login do usuário
 - **App client com secret**, com os fluxos `ALLOW_USER_PASSWORD_AUTH` e `ALLOW_REFRESH_TOKEN_AUTH` habilitados
 - **Domínio do Hosted UI** (Cognito domain ou domínio customizado)
-- **Identity provider da Microsoft** (Entra ID via OIDC ou SAML) com mapeamento do atributo `email`
+- **Identity providers** (Microsoft, Google, Facebook, Apple, Amazon ou o subconjunto usado) com mapeamento do atributo `email`
 - **OAuth no app client**:
   - Grant type: `Authorization code grant`
   - Scopes: `openid`, `email`, `profile` e `aws.cognito.signin.user.admin`
-  - Callback URL: o mesmo valor de `AWS_COGNITO_REDIRECT_URI`
+  - Callback URL: o mesmo valor de `AWS_COGNITO_REDIRECT_URI` (`/oauth2/callback`)
 
-O scope `aws.cognito.signin.user.admin` é necessário para que os tokens obtidos via Microsoft possam ser usados em `GetUser` (verificação de revogação) e `GlobalSignOut` (logout).
+O scope `aws.cognito.signin.user.admin` é necessário para que os tokens obtidos via provedor externo possam ser usados em `GetUser` (verificação de revogação e leitura das identidades) e `GlobalSignOut` (logout).
 
 ### CORS
 
@@ -291,22 +318,30 @@ O projeto possui uma suíte de testes utilizando **JUnit 5**, **Mockito**, **Moc
   - `Refresh`: refresh válido, refresh token inválido e manutenção do refresh token original
   - `Logout`: Global Sign-Out e token já revogado
 
-- **OAuthServiceTest**: Testa o login com Microsoft
-  - Montagem da URL de autorização
+- **OAuthServiceTest**: Testa o login federado
+  - URL de autorização a partir do provedor cadastrado
+  - Provedor não cadastrado
   - Erro retornado pelo provedor e ausência de código
   - Código rejeitado e Cognito indisponível
   - Criação do usuário federado no primeiro login
   - Provedor sem e-mail e e-mail já cadastrado com senha
 
-- **UserServiceTest**: Busca do usuário atual, por e-mail e por Cognito sub
+- **LinkServiceTest**: Criação de login local e vínculo de provedor externo, inclusive e-mail divergente
+
+- **OAuthStateServiceTest**: Assinatura HMAC-SHA256 do `state`, adulteração e expiração
+
+- **SsoProviderServiceTest**: Cadastro, duplicata, remoção, provedor encontrado e provedor ausente
+
+- **UserServiceTest**: Busca do usuário atual, por id, por e-mail e por Cognito sub
 
 - **CognitoServiceTest**: Testa as chamadas ao AWS SDK
   - Uso do e-mail como username e cálculo do `SECRET_HASH`
   - Fluxos `USER_PASSWORD_AUTH` e `REFRESH_TOKEN_AUTH`
   - `GetUser`, `GlobalSignOut` e `AdminDeleteUser`
+  - Criação de usuário confirmado, senha permanente, busca administrativa e `AdminLinkProviderForUser`
 
 - **CognitoOAuthServiceTest**: Testa as chamadas HTTP ao Hosted UI
-  - URL de autorização, troca de código com Basic Auth e `userInfo`
+  - URL de autorização com e sem `state`, troca de código com Basic Auth e `userInfo`
 
 #### Testes de Segurança e Configuração
 
@@ -325,7 +360,9 @@ O projeto possui uma suíte de testes utilizando **JUnit 5**, **Mockito**, **Moc
   - POST `/auth/login`, `/auth/refresh`, `/auth/logout`
   - Validação de requisições e tratamento de erros
 
-- **OAuthControllerTest**: Redirecionamento para a Microsoft e callback
+- **OAuthControllerTest**: URL de autorização e callback de login ou de vínculo
+- **LinkControllerTest**: Criação de senha local e URL para vincular um provedor
+- **SsoProviderControllerTest**: Cadastro e remoção de um identity provider
 
 - **GlobalExceptionHandlerTest**: Mapeamento de cada exceção para o status HTTP correto
 
@@ -437,43 +474,107 @@ Gera novos tokens a partir do refresh token.
 
 **Response (200 OK):** mesmo formato do login. Se o Cognito não rotacionar o refresh token, o original é devolvido.
 
-### Login com Microsoft (Públicos)
+### Login Federado (Público)
 
-#### GET `/oauth2/microsoft`
-Redireciona o navegador para o Cognito Hosted UI, que encaminha para o login da Microsoft.
+#### POST `/oauth2/authorize`
+Gera a URL do Cognito Hosted UI para o provedor informado. O provedor precisa estar cadastrado em `sso_providers`. A API não redireciona: devolve a URL para o cliente abrir.
 
-**Response:** `302 Found` com header `Location` apontando para `https://<cognito-domain>/oauth2/authorize?...`
+**Request Body:**
+```json
+{
+  "provider": "MICROSOFT"
+}
+```
 
-#### GET `/oauth2/microsoft/callback`
-URL de retorno configurada no Cognito. Troca o código de autorização por tokens e provisiona o usuário no banco no primeiro acesso.
+Valores aceitos: `MICROSOFT`, `GOOGLE`, `FACEBOOK`, `APPLE`, `AMAZON`.
+
+**Response (200 OK):**
+```json
+{
+  "authorizationUrl": "https://meu-app.auth.us-east-1.amazoncognito.com/oauth2/authorize?..."
+}
+```
+
+#### GET `/oauth2/callback`
+URL de retorno configurada no Cognito.
+
+Sem `state`, troca o código por tokens e provisiona o usuário no banco no primeiro acesso.
+
+Com `state`, não faz login: vincula o provedor externo à conta nativa indicada no state. O state é assinado com HMAC-SHA256 (client secret), vale 10 minutos e não é persistido.
 
 **Query Params:**
 - `code`: Código de autorização
+- `state`: Presente apenas no fluxo de vínculo
 - `error` / `error_description`: Preenchidos pelo provedor em caso de falha
 
-**Response (200 OK):** mesmo formato do login.
+**Response:** `200 OK` com os tokens no login, ou `204 No Content` no vínculo.
 
-### Fluxo do Login com Microsoft
+### Fluxo do Login Federado
 
 ```
-Cliente            API                     Cognito Hosted UI         Microsoft
-  │  GET /oauth2/microsoft  │                        │                      │
-  │────────────────────────>│                        │                      │
-  │  302 /oauth2/authorize  │                        │                      │
-  │<────────────────────────│                        │                      │
-  │──────────────────────────────────────────────────>│  redireciona         │
-  │                         │                        │─────────────────────>│
-  │                         │                        │<─────────────────────│
-  │  302 /oauth2/microsoft/callback?code=...          │                      │
-  │<──────────────────────────────────────────────────│                      │
-  │  GET callback?code=...  │                        │                      │
-  │────────────────────────>│  POST /oauth2/token    │                      │
-  │                         │───────────────────────>│                      │
-  │                         │  GET /oauth2/userInfo  │                      │
-  │                         │───────────────────────>│                      │
-  │  200 { tokens }         │                        │                      │
-  │<────────────────────────│                        │                      │
+Cliente            API                     Cognito Hosted UI         Provedor
+  │ POST /oauth2/authorize │                        │                    │
+  │───────────────────────>│                        │                    │
+  │ 200 { authorizationUrl }│                       │                    │
+  │<───────────────────────│                        │                    │
+  │─────────────────────────────────────────────────>│  redireciona      │
+  │                         │                        │───────────────────>│
+  │                         │                        │<───────────────────│
+  │  302 /oauth2/callback?code=...                   │                    │
+  │<─────────────────────────────────────────────────│                    │
+  │  GET callback?code=...  │                        │                    │
+  │────────────────────────>│  POST /oauth2/token    │                    │
+  │                         │───────────────────────>│                    │
+  │                         │  GET /oauth2/userInfo  │                    │
+  │                         │───────────────────────>│                    │
+  │  200 { tokens }         │                        │                    │
+  │<────────────────────────│                        │                    │
 ```
+
+### Vínculo de Contas (Protegido)
+
+Exige `Authorization: Bearer <accessToken>`.
+
+#### POST `/v1/link/local`
+Para quem entrou primeiro por um provedor externo. Cria a senha local, confirma o e-mail no Cognito e passa a permitir os dois acessos.
+
+**Request Body:**
+```json
+{
+  "password": "Senha@123"
+}
+```
+
+**Response:** `204 No Content`
+
+#### GET `/v1/link/{provider}`
+Para quem entrou primeiro com e-mail e senha. Devolve a URL de autorização com `state` assinado. O callback desse fluxo vincula as contas e não devolve tokens.
+
+**Response (200 OK):** mesmo formato de `POST /oauth2/authorize`.
+
+### Provedores SSO (Protegido)
+
+Exige `Authorization: Bearer <accessToken>`. A migração cria `sso_providers` vazia; estes endpoints cadastram e removem os provedores que o login federado pode usar. O `identityProvider` é o nome do provedor no User Pool do Cognito, não o valor do enum.
+
+#### POST `/v1/sso-providers`
+Cadastra um provedor. Se o `type` já existir, a resposta é `409 Conflict`.
+
+**Request Body:**
+```json
+{
+  "type": "MICROSOFT",
+  "identityProvider": "Microsoft"
+}
+```
+
+Valores de `type`: `MICROSOFT`, `GOOGLE`, `FACEBOOK`, `APPLE`, `AMAZON`.
+
+**Response:** `204 No Content`
+
+#### DELETE `/v1/sso-providers/{type}`
+Remove o provedor cadastrado. Se ele não existir, a resposta é `404 Not Found`.
+
+**Response:** `204 No Content`
 
 ### Autenticação (Protegidos)
 
@@ -509,7 +610,7 @@ Authorization: Bearer <accessToken>
 }
 ```
 
-Usuários criados via Microsoft não possuem `username` (o campo retorna `null`).
+Usuários criados via provedor externo não possuem `username` (o campo retorna `null`).
 
 ## 🚨 Tratamento de Exceções
 
@@ -517,11 +618,13 @@ O projeto implementa um **GlobalExceptionHandler** que centraliza o tratamento d
 
 ### Exceções Customizadas
 
-- `UserAlreadyExistsException` (409 Conflict): Username ou e-mail já cadastrado
-- `UserCreationException` (500 Internal Server Error): Falha ao criar o usuário no Cognito ou no banco
-- `AuthenticationFailedException` (401 Unauthorized): Credenciais inválidas, usuário não confirmado, refresh token inválido ou falha no login com Microsoft
+- `UserAlreadyExistsException` (409 Conflict): Username, e-mail, login local, provedor já vinculado ou identity provider já cadastrado
+- `UserCreationException` (500 Internal Server Error): Falha ao criar o usuário no Cognito, no banco ou ao vincular identidades
+- `AuthenticationFailedException` (401 Unauthorized): Credenciais inválidas, usuário não confirmado, refresh token inválido, falha no login federado ou `state` de vínculo inválido/expirado
+- `AccountLinkException` (400 Bad Request): Senha recusada pela política do Cognito, e-mails diferentes ou tentativa de vincular provedor sem login local
 - `EmailConfirmationException` (400 Bad Request): Código inválido ou expirado, e-mail já confirmado ou limite de reenvios atingido
 - `UserNotExistsException` (404 Not Found): Usuário não encontrado no banco local
+- `SsoProviderNotFoundException` (404 Not Found): Provedor não cadastrado em `sso_providers`
 - `MethodArgumentNotValidException` (400 Bad Request): Falha na validação do corpo da requisição
 
 Requisições a rotas protegidas sem token, com token inválido ou revogado retornam `401 Unauthorized` sem corpo.
@@ -570,18 +673,52 @@ WARN  - Revoked access token for Cognito sub 1***f
 O projeto utiliza **Flyway** para versionamento do banco de dados:
 
 - `V1__create_initial_tables.sql`: Criação das tabelas `users`, `roles` e `user_roles`
+- `V2__create_sso_providers_table.sql`: Criação da tabela `sso_providers` (`type`, `identity_provider`). Não insere nenhum provedor
+- `V3__allow_null_cognito_sub.sql`: Permite `cognito_sub` nulo quando a compensação de um vínculo local falha depois de remover o usuário federado
+- `V4__unique_email_ignore_case.sql`: Troca a unicidade de `email` por um índice em `lower(email)`, para a busca ignorar maiúsculas e minúsculas
+
+### Provedores SSO
+
+A migração **não** insere provedores. O cadastro é feito com a API autenticada:
+
+```bash
+curl -X POST http://localhost:8080/v1/sso-providers \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"MICROSOFT","identityProvider":"Microsoft"}'
+```
+
+O `identityProvider` tem de ser exatamente o nome do provedor no Cognito. `type` aceita apenas `MICROSOFT`, `GOOGLE`, `FACEBOOK`, `APPLE` e `AMAZON`. Sem o registro, `POST /oauth2/authorize` e `GET /v1/link/{provider}` respondem `404`. Para remover:
+
+```bash
+curl -X DELETE http://localhost:8080/v1/sso-providers/MICROSOFT \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+Também é possível inserir direto no banco:
+
+```sql
+INSERT INTO sso_providers (type, identity_provider)
+VALUES ('MICROSOFT', 'Microsoft');
+```
 
 ### Modelo de Dados
 
 - **User**: Entidade principal de usuário
   - Campos: id (UUID), username, email, cognitoSub, createdAt, updatedAt
   - `username` é opcional (usuários federados não possuem)
-  - `cognitoSub` liga o registro local ao usuário do Cognito
+  - `cognitoSub` liga o registro local ao usuário do Cognito e pode ficar nulo se o vínculo de uma senha local falhar depois que o usuário federado já foi removido
   - Relacionamento Many-to-Many com Role
 
 - **Role**: Entidade de permissões
   - Campos: id (UUID), name, description, createdAt, updatedAt
   - Relacionamento Many-to-Many com User
+
+- **SsoProvider**: Provedor federado habilitado para a API
+  - Campos: id (UUID), type, identityProvider, createdAt, updatedAt
+  - `type` é único (`MICROSOFT`, `GOOGLE`, `FACEBOOK`, `APPLE`, `AMAZON`)
+  - `identityProvider` é o nome do provedor no User Pool do Cognito
+  - Nenhum registro é criado pela migração; o cadastro é feito por `POST /v1/sso-providers`
 
 A senha **não é armazenada** no banco local; ela existe apenas no Cognito. Nenhuma role é criada automaticamente pela migração.
 
@@ -603,12 +740,12 @@ A senha **não é armazenada** no banco local; ela existe apenas no Cognito. Nen
 - `/oauth2/**`
 - `/health/**`, `/public/**`
 
-Todas as demais rotas exigem autenticação.
+Todas as demais rotas exigem autenticação, inclusive `/v1/link/**` e `/v1/sso-providers/**`.
 
 ### Validações
 
 - **Bean Validation**: Validação de dados de entrada nos DTOs de requisição
-- **Regras de Negócio**: Unicidade de username/e-mail e conflito entre login por senha e login federado
+- **Regras de Negócio**: Unicidade de username/e-mail, conflito entre login por senha e login federado, e vínculo somente quando os e-mails coincidem
 - **Políticas do Cognito**: Política de senha e confirmação de e-mail aplicadas pelo User Pool
 
 ## 🚀 Como Usar Este Projeto
@@ -617,7 +754,7 @@ Todas as demais rotas exigem autenticação.
 
 ```bash
 git clone <repository-url>
-cd OAuth
+cd spring-security-oauth2
 ```
 
 ### 2. Abrir no Dev Container (recomendado)
@@ -650,20 +787,34 @@ export AWS_COGNITO_USER_POOL_ID=us-east-1_AbCdEfGhI
 export AWS_COGNITO_CLIENT_ID=seu_client_id
 export AWS_COGNITO_CLIENT_SECRET=seu_client_secret
 export AWS_COGNITO_DOMAIN=https://meu-app.auth.us-east-1.amazoncognito.com
-export AWS_COGNITO_MICROSOFT_IDENTITY_PROVIDER=Microsoft
+export AWS_COGNITO_REDIRECT_URI=http://localhost:8080/oauth2/callback
 ```
 
-### 4. Executar Migrações
-
-As migrações Flyway são executadas automaticamente na inicialização.
-
-### 5. Iniciar a Aplicação
+### 4. Iniciar a Aplicação
 
 ```bash
 ./gradlew bootRun
 ```
 
-Ou use a configuração **Spring Boot: OAuth** no painel de Run and Debug.
+Ou use a configuração **Spring Boot: spring-security-oauth2** no painel de Run and Debug. Na subida, o Flyway cria `sso_providers` vazia.
+
+### 5. Cadastrar os provedores
+
+A migração não insere provedores. Com a aplicação no ar e um access token válido, cadastre cada identity provider que existe no User Pool. O `identityProvider` é o nome configurado no Cognito, não o valor do enum:
+
+```bash
+curl -X POST http://localhost:8080/v1/sso-providers \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"MICROSOFT","identityProvider":"Microsoft"}'
+
+curl -X POST http://localhost:8080/v1/sso-providers \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"GOOGLE","identityProvider":"Google"}'
+```
+
+Inclua apenas os provedores que existem no User Pool. Sem esse cadastro, o authorize e o vínculo daquele provedor respondem `404`. Para remover, use `DELETE /v1/sso-providers/{type}`.
 
 ### 6. Testar os Endpoints
 
@@ -695,9 +846,24 @@ curl -X GET http://localhost:8080/v1/users/current \
 # Logout
 curl -X POST http://localhost:8080/auth/logout \
   -H "Authorization: Bearer <accessToken>"
+
+# URL de login federado (o cliente redireciona o navegador para authorizationUrl)
+curl -X POST http://localhost:8080/oauth2/authorize \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"MICROSOFT"}'
+
+# Cadastrar um provedor SSO
+curl -X POST http://localhost:8080/v1/sso-providers \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"MICROSOFT","identityProvider":"Microsoft"}'
+
+# Remover um provedor SSO
+curl -X DELETE http://localhost:8080/v1/sso-providers/MICROSOFT \
+  -H "Authorization: Bearer <accessToken>"
 ```
 
-Para o login com Microsoft, acesse `http://localhost:8080/oauth2/microsoft` no navegador. Ao final do fluxo, os tokens são exibidos como JSON na URL de callback.
+O callback `GET /oauth2/callback` é chamado pelo Cognito. Sem `state`, a resposta é o JSON dos tokens. Com `state`, a resposta é `204` e a conta é vinculada.
 
 ## 📦 Extensibilidade
 
@@ -706,7 +872,7 @@ Este projeto pode ser facilmente estendido com:
 - **Novos Endpoints**: Adicionar controllers na pasta `api/controller`
 - **Novas Entidades**: Criar entidades em `entity` e repositórios em `repository`
 - **Novos Serviços**: Implementar serviços em `service`
-- **Novos Provedores Federados**: Cadastrar o provedor (Google, Apple, SAML etc.) no Cognito e reutilizar `CognitoOAuthService.authorizeUrl()` com o nome do novo provedor
+- **Novos Provedores Federados**: Cadastrar o provedor no Cognito, incluir o valor no enum `SsoProviderType` se ainda não existir, e registrar com `POST /v1/sso-providers`
 - **Novas Roles**: Adicionar roles no banco e usar `@PreAuthorize("hasRole('...')")` ou regras em `SecurityConfig`
 - **Novas Migrações**: Adicionar arquivos `V<n>__descricao.sql` em `db/migration`
 - **Novas Origens CORS**: Ajustar `corsConfigurationSource()` em `SecurityConfig`

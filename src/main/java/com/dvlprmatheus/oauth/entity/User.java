@@ -39,7 +39,7 @@ public class User extends AbstractEntity implements UserDetails {
   @Column(nullable = false, unique = true, length = 100)
   private String email;
 
-  @Column(name = "cognito_sub", nullable = false, unique = true, length = 50)
+  @Column(name = "cognito_sub", unique = true, length = 50)
   private String cognitoSub;
 
   @ManyToMany(fetch = FetchType.EAGER)
