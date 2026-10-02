@@ -3,6 +3,7 @@ package com.dvlprmatheus.oauth.service.aws;
 import com.dvlprmatheus.oauth.config.properties.CognitoProperties;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoTokenResponse;
 import com.dvlprmatheus.oauth.service.aws.model.CognitoUserInfo;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -34,19 +35,18 @@ public class CognitoOAuthService {
   }
 
   public String authorizeUrl(String identityProvider, String state) {
-    UriComponentsBuilder builder =
-        UriComponentsBuilder.fromUriString(cognitoProperties.domain())
-            .path("/oauth2/authorize")
-            .queryParam("response_type", "code")
-            .queryParam("client_id", cognitoProperties.clientId())
-            .queryParam("redirect_uri", cognitoProperties.redirectUri())
-            .queryParam("identity_provider", identityProvider)
-            .queryParam("scope", SCOPES)
-            .queryParam("prompt", "login");
-    if (state != null) {
-      builder.queryParam("state", state);
-    }
-    return builder.build().encode().toUriString();
+    return UriComponentsBuilder.fromUriString(cognitoProperties.domain())
+        .path("/oauth2/authorize")
+        .queryParam("response_type", "code")
+        .queryParam("client_id", cognitoProperties.clientId())
+        .queryParam("redirect_uri", cognitoProperties.redirectUri())
+        .queryParam("identity_provider", identityProvider)
+        .queryParam("scope", SCOPES)
+        .queryParam("prompt", "login")
+        .queryParamIfPresent("state", Optional.ofNullable(state))
+        .build()
+        .encode()
+        .toUriString();
   }
 
   public CognitoTokenResponse exchangeAuthorizationCode(String code) {
