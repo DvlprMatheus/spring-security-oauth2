@@ -2,7 +2,7 @@ spring:
     application:
         name: spring-security-oauth2
     datasource:
-        url: jdbc:postgresql://${POSTGRES_HOST:db}:5432/${POSTGRES_DB:oauth_db}
+        url: ${POSTGRES_URL:jdbc:postgresql://postgres:5432/oauth_db}
         username: ${POSTGRES_USER:postgres}
         password: ${POSTGRES_PASSWORD:postgres}
         driver-class-name: org.postgresql.Driver
@@ -14,7 +14,7 @@ spring:
         show-sql: true
     flyway:
         enabled: true
-        url: jdbc:postgresql://${POSTGRES_HOST:db}:5432/${POSTGRES_DB:oauth_db}
+        url: ${POSTGRES_URL:jdbc:postgresql://postgres:5432/oauth_db}
         user: ${POSTGRES_USER:postgres}
         password: ${POSTGRES_PASSWORD:postgres}
         locations: classpath:db/migration

@@ -11,21 +11,21 @@ services:
         POSTGRES_PASSWORD: postgres
         POSTGRES_USER: postgres
         POSTGRES_DB: oauth_db
-        POSTGRES_HOSTNAME: db
+        POSTGRES_HOSTNAME: postgres
     volumes:
       - ../..:/workspaces:cached
     command: sleep infinity
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     networks:
-      - app-network
-  db:
+      - oauth-network
+  postgres:
     container_name: oauth-db
     image: postgres:15
     restart: unless-stopped
     networks:
-      - app-network
+      - oauth-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -41,5 +41,5 @@ services:
     ports:
       - "5432:5432"
 networks:
-  app-network:
+  oauth-network:
     driver: bridge
